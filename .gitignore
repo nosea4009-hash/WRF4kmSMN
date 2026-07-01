@@ -1,0 +1,21 @@
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Datos descargados y salidas generadas
+cache/
+output/
+*.nc
+*.png
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# Sistema / editor
+.DS_Store
+.vscode/
+.idea/
