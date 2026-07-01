@@ -122,15 +122,18 @@ def add_region(name: str, lon_min: float, lon_max: float,
 # 2) PALETAS DE COLOR (colormap del producto)
 # ---------------------------------------------------------------------------
 
+# Paleta de viento a 10 m (9 colores = 9 intervalos, de amarillo claro a rojo
+# oscuro). Va acompañada de WIND_LEVELS (10 niveles en km/h).
+WIND_COLORS = [
+    "#ffffb4", "#fffb78", "#ffce36", "#ffa900", "#ff5d00",
+    "#ff2a00", "#eb0600", "#c70000", "#a00000",
+]
+WIND_LEVELS = [30, 35, 40, 50, 60, 75, 90, 100, 120, 150]
+
+
 def _wind_cmap():
-    """Paleta para velocidad de viento (nudos): del blanco/celeste a violeta."""
-    colors = [
-        "#ffffff", "#d9f0f7", "#a8ddf0", "#74c7e8", "#4aa8d8",
-        "#3d9970", "#5cb85c", "#a3d977", "#f7e26b", "#f5b942",
-        "#f28c28", "#e8601c", "#d7301f", "#b30000", "#7f0000",
-        "#8b3a8b", "#5b2a86",
-    ]
-    return ListedColormap(colors)
+    """Paleta para velocidad de viento a 10 m (km/h)."""
+    return ListedColormap(WIND_COLORS)
 
 
 def _temp_cmap():
@@ -176,18 +179,22 @@ def _wind_speed_knots(ds: xr.Dataset) -> np.ndarray:
     return mag * 1.94384  # a nudos
 
 
+def _wind_speed_kmh(ds: xr.Dataset) -> np.ndarray:
+    mag = ds["magViento10"].isel(time=0).values  # m/s
+    return mag * 3.6  # a km/h
+
+
 PRODUCTS: dict[str, Product] = {
     "10m_wind": Product(
         key="10m_wind",
         title="Viento a 10 metros / Wind at 10 m (Wind Barbs)",
         subtitle="WRF DET SMN 4 km",
-        units_label="Velocidad del viento a 10 m [nudos]",
+        units_label="Velocidad del viento a 10 m [km/h]",
         cmap=_wind_cmap,
-        levels=np.array([0, 2, 5, 8, 11, 14, 17, 20, 24, 28,
-                         32, 37, 42, 48, 54, 60, 70]),
+        levels=np.array(WIND_LEVELS),
         kind="contourf",
-        extend="max",
-        field_fn=_wind_speed_knots,
+        extend="neither",
+        field_fn=_wind_speed_kmh,
         barbs=True,
     ),
     "t2": Product(
