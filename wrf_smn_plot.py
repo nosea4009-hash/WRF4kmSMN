@@ -685,8 +685,8 @@ def accumulate_pp(date: str, cycle: str, lead: int, accum_hours: int,
     """Suma la precipitacion horaria (PP de archivos 01H) sobre las
     'accum_hours' horas que terminan en el plazo 'lead'.
 
-    Devuelve (campo_sumado, ds_ultimo) donde ds_ultimo se usa para las
-    coordenadas y el tiempo de validez.
+    Devuelve (campo_sumado, ds_ultimo, archivos_usados) donde ds_ultimo se usa
+    para las coordenadas/tiempo y archivos_usados es la lista de rutas locales.
     """
     first = lead - accum_hours + 1
     if first < 1:
@@ -695,16 +695,20 @@ def accumulate_pp(date: str, cycle: str, lead: int, accum_hours: int,
             f"{accum_hours} (se pidio {lead}). Elija un plazo mayor.")
     total = None
     last_ds = None
+    used = []
     print(f"[accum] Sumando PP horaria de los plazos {first:03d}..{lead:03d} "
           f"({accum_hours} h)")
     for l in range(first, lead + 1):
         f = download_file(date, cycle, l, freq="01H", force=force)
+        used.append(f)
         ds = xr.open_dataset(f)
         pp = ds["PP"].isel(time=0).values
         total = pp.copy() if total is None else total + pp
         if l == lead:
             last_ds = ds
-    return total, last_ds
+        else:
+            ds.close()
+    return total, last_ds, used
 
 
 def _valid_time_from_ds(ds: xr.Dataset, init_time: datetime,
@@ -717,9 +721,33 @@ def _valid_time_from_ds(ds: xr.Dataset, init_time: datetime,
         return init_time + timedelta(hours=lead)
 
 
+def cleanup_files(paths) -> None:
+    """Borra del disco los archivos .nc indicados (usado por --cleanup).
+    Solo toca los .nc del cache; nunca borra las imagenes de salida."""
+    borrados, liberado = 0, 0
+    for p in dict.fromkeys(paths):          # evita duplicados, conserva orden
+        try:
+            if p and os.path.exists(p):
+                liberado += os.path.getsize(p)
+                os.remove(p)
+                borrados += 1
+        except OSError as e:
+            print(f"[cleanup] No se pudo borrar {p}: {e}")
+    if borrados:
+        print(f"[cleanup] Borrados {borrados} archivo(s) .nc del cache "
+              f"({liberado / 1e6:.1f} MB liberados).")
+    else:
+        print("[cleanup] No habia archivos .nc para borrar.")
+
+
 def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
-              region: str = "argentina", force_download: bool = False) -> str:
-    """Descarga los datos y genera el plot del producto/region pedidos."""
+              region: str = "argentina", force_download: bool = False,
+              cleanup: bool = False) -> str:
+    """Descarga los datos y genera el plot del producto/region pedidos.
+
+    Si cleanup=True, borra del cache los archivos .nc usados por esta corrida
+    despues de guardar la imagen (el .png de salida se conserva).
+    """
     if var not in PRODUCTS:
         raise KeyError(f"Producto '{var}' no definido. Opciones: {list(PRODUCTS)}")
     product = PRODUCTS[var]
@@ -728,12 +756,13 @@ def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
 
     if product.accum_hours:
         # Producto de acumulacion: sumar varios archivos horarios.
-        field, ds = accumulate_pp(date, cycle, lead, product.accum_hours,
-                                  force=force_download)
+        field, ds, used_files = accumulate_pp(
+            date, cycle, lead, product.accum_hours, force=force_download)
     else:
         # Producto de un solo archivo.
         local = download_file(date, cycle, lead, freq=product.freq,
                               force=force_download)
+        used_files = [local]
         ds = xr.open_dataset(local)
         field = product.field_fn(ds)
 
@@ -741,8 +770,13 @@ def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
 
     tag = f"{var}_{region}_{date}_{cycle}_f{lead:03d}"
     out_path = os.path.join(OUTPUT_DIR, f"WRFDET_{tag}.png")
-    return plot_product(ds, product, field, region, init_time, valid_time,
-                        out_path)
+    result = plot_product(ds, product, field, region, init_time, valid_time,
+                          out_path)
+
+    ds.close()  # liberar el handle del archivo antes de un eventual borrado
+    if cleanup:
+        cleanup_files(used_files)
+    return result
 
 
 def _parse_args():
@@ -762,6 +796,9 @@ def _parse_args():
                    action="store_true",
                    help="Lista todos los productos/variables disponibles y termina.")
     p.add_argument("--force", action="store_true", help="Forzar re-descarga")
+    p.add_argument("--cleanup", action="store_true",
+                   help="Borra del cache los archivos .nc usados por esta "
+                        "corrida al terminar (conserva el .png de salida).")
     return p.parse_args()
 
 
@@ -780,7 +817,8 @@ def main():
     note = _font_note()
     if note:
         print(note)
-    make_plot(args.date, args.cycle, args.lead, args.var, args.region, args.force)
+    make_plot(args.date, args.cycle, args.lead, args.var, args.region,
+              args.force, args.cleanup)
 
 
 if __name__ == "__main__":
