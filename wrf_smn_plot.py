@@ -251,16 +251,17 @@ PP10M_COLORS = [
 ]
 
 # Si True, se muestra la INTENSIDAD en mm/h (= mm en 10 min x 6).
-# Si False, se muestra la precipitacion acumulada nativa en mm (por 10 min).
-PP10M_AS_RATE = True
+# Si False, se muestra la precipitacion ACUMULADA nativa en mm (por 10 min).
+PP10M_AS_RATE = False
 
 # Escala en mm/h pensada para un periodo de acumulacion de 10 minutos.
 # 15 bordes -> 14 intervalos (coincide con los 14 colores). extend='neither'.
 # Va desde llovizna debil hasta lluvia extrema (convectiva). El tope (200 mm/h)
 # equivale a ~33 mm en 10 min, valor practicamente inalcanzable.
 PP10M_LEVELS_RATE = [0.5, 1, 2, 4, 6, 10, 15, 20, 30, 45, 60, 90, 120, 160, 200]
-# Escala equivalente en mm acumulados en 10 min (= mm/h / 6).
-PP10M_LEVELS_MM = [0.1, 0.2, 0.35, 0.7, 1, 1.7, 2.5, 3.5, 5, 7.5, 10, 15, 20, 27, 33]
+# Escala en mm ACUMULADOS en 10 minutos (14 intervalos). Buena resolucion en
+# valores debiles/moderados y tope alto (50 mm/10min) para eventos extremos.
+PP10M_LEVELS_MM = [0.1, 0.25, 0.5, 1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40, 50]
 
 
 def _pp10m_cmap():
@@ -358,7 +359,9 @@ PRODUCTS: dict[str, Product] = {
     ),
     "pp_10m": Product(
         key="pp_10m",
-        title="Precipitaci\u00f3n en 10 min / 10-min Precipitation",
+        title=("Precipitaci\u00f3n Acumulada 10 minutos previos (mm, somb.)"
+               if not PP10M_AS_RATE
+               else "Precipitaci\u00f3n 10 min - intensidad (mm/h, somb.)"),
         subtitle="WRF DET SMN 4 km",
         units_label=("Intensidad de precipitaci\u00f3n [mm/h]" if PP10M_AS_RATE
                      else "Precipitaci\u00f3n acumulada en 10 min [mm]"),
