@@ -94,28 +94,118 @@ def _font_note() -> str:
 # El dominio del WRF cubre toda la Republica Argentina y alrededores.
 # Para hacer zoom, simplemente elegir una region o agregar una nueva aca.
 
+#   clave           :  (lon_min,  lon_max,  lat_min,  lat_max)
 REGIONS: dict[str, tuple[float, float, float, float]] = {
-    # Vista completa del dominio / toda Argentina
-    "argentina":   (-76.0, -52.0, -56.0, -21.0),
-    # Regiones
-    "norte":       (-70.0, -57.0, -30.0, -21.0),
-    "noa":         (-70.0, -62.0, -31.0, -21.0),   # Noroeste argentino
-    "nea":         (-63.0, -53.0, -31.0, -22.0),   # Noreste argentino / Litoral
-    "centro":      (-69.0, -57.0, -39.0, -29.0),   # Centro (Cordoba, Pampa)
-    "cuyo":        (-71.0, -65.0, -37.0, -28.0),
-    "buenos_aires":(-63.5, -56.0, -41.5, -33.0),
-    "amba":        (-59.6, -57.7, -35.4, -34.0),   # Area Metropolitana Bs. As.
-    "patagonia":   (-75.0, -62.0, -56.0, -38.0),
-    "patagonia_n": (-72.0, -62.0, -44.0, -36.0),
-    "sur":         (-75.0, -63.0, -56.0, -49.0),
-    "cuyo_centro": (-71.0, -62.0, -38.0, -28.0),
+
+    # -------------------- Dominio completo y macro-regiones --------------------
+    "argentina":        (-76.0, -52.0, -56.0, -21.0),   # todo el pais + alrededores
+    "noroeste":         (-70.0, -61.5, -31.5, -21.5),   # NOA
+    "noreste":          (-63.5, -53.2, -31.0, -21.8),   # NEA / Litoral norte
+    "cuyo":             (-71.0, -64.5, -37.8, -28.0),
+    "centro":           (-68.5, -56.5, -41.5, -29.0),   # Region Centro / Pampeana
+    "pampa_humeda":     (-64.0, -57.0, -39.0, -30.5),
+    "litoral":          (-61.0, -53.2, -34.5, -25.5),
+    "patagonia":        (-75.0, -62.0, -56.0, -38.0),
+    "patagonia_norte":  (-72.0, -62.5, -42.5, -36.0),
+    "patagonia_sur":    (-74.0, -63.5, -56.0, -42.0),
+    "comahue":          (-72.0, -64.0, -42.0, -36.0),
+
+    # -------------------- NOA (Noroeste) --------------------
+    "noa_jujuy":        (-67.5, -64.0, -24.7, -21.6),
+    "noa_salta":        (-68.7, -62.2, -26.5, -21.9),
+    "noa_tucuman":      (-66.3, -64.4, -28.1, -25.9),
+    "noa_catamarca":    (-69.2, -64.8, -30.2, -24.9),
+    "noa_larioja":      (-69.7, -65.5, -32.0, -27.9),
+    "noa_santiago":     (-65.7, -61.5, -30.8, -25.5),   # Santiago del Estero
+
+    # -------------------- NEA (Noreste / Litoral) --------------------
+    "nea_formosa":      (-62.6, -57.4, -27.0, -21.9),
+    "nea_chaco":        (-63.6, -58.2, -28.2, -24.0),
+    "nea_corrientes":   (-60.0, -55.5, -30.8, -27.1),
+    "nea_misiones":     (-56.2, -53.5, -28.3, -25.4),
+
+    # -------------------- Cuyo --------------------
+    "cuyo_mendoza":     (-70.7, -66.4, -37.7, -31.9),
+    "cuyo_sanjuan":     (-70.7, -66.8, -32.5, -28.4),
+    "cuyo_sanluis":     (-67.3, -64.8, -36.1, -31.8),
+
+    # -------------------- Centro / Pampeana --------------------
+    "centro_cordoba":       (-65.9, -61.7, -35.1, -29.4),
+    "centro_santafe":       (-63.1, -58.7, -34.1, -27.9),
+    "centro_entrerios":     (-60.9, -57.7, -34.2, -30.0),
+    "centro_lapampa":       (-68.4, -62.9, -39.6, -34.9),
+    "centro_buenosaires":   (-63.5, -56.6, -41.2, -33.1),
+    "centro_caba":          (-58.75, -58.15, -34.85, -34.40),  # CABA (zoom fino)
+    "amba":                 (-59.6, -57.7, -35.4, -34.0),      # Area Metrop. Bs.As.
+
+    # -------------------- Patagonia --------------------
+    "pat_neuquen":          (-72.0, -67.9, -41.2, -35.9),
+    "pat_rionegro":         (-72.0, -62.7, -42.1, -37.5),
+    "pat_chubut":           (-72.1, -63.5, -46.1, -41.9),
+    "pat_santacruz":        (-73.7, -65.6, -52.5, -45.9),
+    "pat_tierradelfuego":   (-68.8, -63.4, -55.2, -52.5),
+
+    # -------------------- Alias / compatibilidad --------------------
+    "noa":              (-70.0, -61.5, -31.5, -21.5),   # = noroeste
+    "nea":              (-63.5, -53.2, -31.0, -21.8),   # = noreste
+    "norte":            (-70.0, -57.0, -30.0, -21.0),
+    "buenos_aires":     (-63.5, -56.6, -41.2, -33.1),   # = centro_buenosaires
+    "patagonia_n":      (-72.0, -62.5, -42.5, -36.0),   # = patagonia_norte
+    "sur":              (-74.0, -63.5, -56.0, -49.0),
+}
+
+# Nombre descriptivo (para el listado). Solo informativo.
+REGION_LABELS: dict[str, str] = {
+    "argentina": "Republica Argentina (dominio completo)",
+    "noroeste": "NOA - Noroeste argentino",
+    "noreste": "NEA - Noreste argentino / Litoral norte",
+    "cuyo": "Cuyo",
+    "centro": "Region Centro / Pampeana",
+    "pampa_humeda": "Pampa Humeda",
+    "litoral": "Litoral (Entre Rios, Corrientes, Misiones, Santa Fe)",
+    "patagonia": "Patagonia",
+    "patagonia_norte": "Patagonia Norte",
+    "patagonia_sur": "Patagonia Sur",
+    "comahue": "Comahue (Neuquen, Rio Negro, oeste de La Pampa)",
+    "noa_jujuy": "Jujuy", "noa_salta": "Salta", "noa_tucuman": "Tucuman",
+    "noa_catamarca": "Catamarca", "noa_larioja": "La Rioja",
+    "noa_santiago": "Santiago del Estero",
+    "nea_formosa": "Formosa", "nea_chaco": "Chaco",
+    "nea_corrientes": "Corrientes", "nea_misiones": "Misiones",
+    "cuyo_mendoza": "Mendoza", "cuyo_sanjuan": "San Juan",
+    "cuyo_sanluis": "San Luis",
+    "centro_cordoba": "Cordoba", "centro_santafe": "Santa Fe",
+    "centro_entrerios": "Entre Rios", "centro_lapampa": "La Pampa",
+    "centro_buenosaires": "Buenos Aires (provincia)",
+    "centro_caba": "Ciudad Autonoma de Buenos Aires (CABA)",
+    "amba": "Area Metropolitana de Buenos Aires (AMBA)",
+    "pat_neuquen": "Neuquen", "pat_rionegro": "Rio Negro",
+    "pat_chubut": "Chubut", "pat_santacruz": "Santa Cruz",
+    "pat_tierradelfuego": "Tierra del Fuego",
+    "noa": "NOA (alias)", "nea": "NEA (alias)", "norte": "Norte (alias)",
+    "buenos_aires": "Buenos Aires (alias)", "patagonia_n": "Patagonia Norte (alias)",
+    "sur": "Sur / Patagonia austral (alias)",
 }
 
 
 def add_region(name: str, lon_min: float, lon_max: float,
-               lat_min: float, lat_max: float) -> None:
+               lat_min: float, lat_max: float, label: str | None = None) -> None:
     """Agrega o redefine una region de zoom en tiempo de ejecucion."""
     REGIONS[name] = (lon_min, lon_max, lat_min, lat_max)
+    if label:
+        REGION_LABELS[name] = label
+
+
+def list_regions() -> None:
+    """Imprime por pantalla todas las regiones disponibles con sus coordenadas."""
+    print("\nRegiones disponibles (--region <clave>):\n")
+    print(f"  {'clave':<22} {'lon_min':>8} {'lon_max':>8} "
+          f"{'lat_min':>8} {'lat_max':>8}   descripcion")
+    print("  " + "-" * 84)
+    for key, (lo0, lo1, la0, la1) in REGIONS.items():
+        label = REGION_LABELS.get(key, "")
+        print(f"  {key:<22} {lo0:>8.2f} {lo1:>8.2f} {la0:>8.2f} {la1:>8.2f}   {label}")
+    print(f"\n  Total: {len(REGIONS)} regiones.\n")
 
 
 # ---------------------------------------------------------------------------
@@ -498,13 +588,23 @@ def _parse_args():
     p.add_argument("--var", default="10m_wind", choices=list(PRODUCTS),
                    help="Producto/variable a plotear")
     p.add_argument("--region", default="argentina",
-                   help=f"Region de zoom. Opciones: {list(REGIONS)}")
+                   help="Region de zoom (ej: nea_misiones, cuyo_mendoza, "
+                        "patagonia). Use --list-regions para ver todas.")
+    p.add_argument("--list-regions", action="store_true",
+                   help="Lista todas las regiones disponibles y termina.")
     p.add_argument("--force", action="store_true", help="Forzar re-descarga")
     return p.parse_args()
 
 
 def main():
     args = _parse_args()
+    if args.list_regions:
+        list_regions()
+        return
+    if args.region not in REGIONS:
+        raise SystemExit(
+            f"[error] Region '{args.region}' no existe. "
+            f"Use --list-regions para ver las {len(REGIONS)} disponibles.")
     note = _font_note()
     if note:
         print(note)
