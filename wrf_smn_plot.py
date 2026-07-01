@@ -208,6 +208,19 @@ def list_regions() -> None:
     print(f"\n  Total: {len(REGIONS)} regiones.\n")
 
 
+def list_products() -> None:
+    """Imprime la lista de productos/variables disponibles (--var <clave>)."""
+    print("\nProductos / variables disponibles (--var <clave>):\n")
+    print(f"  {'clave':<10} {'freq':<5} {'unidad':<32} descripcion")
+    print("  " + "-" * 92)
+    for key, p in PRODUCTS.items():
+        extra = f" [acum. {p.accum_hours} h]" if p.accum_hours else ""
+        print(f"  {key:<10} {p.freq:<5} {p.units_label:<32} {p.title}{extra}")
+    print(f"\n  Total: {len(PRODUCTS)} productos.")
+    print("  Ejemplo: python wrf_smn_plot.py --var pp_24h --region centro "
+          "--lead 24\n")
+
+
 # ---------------------------------------------------------------------------
 # 2) PALETAS DE COLOR (colormap del producto)
 # ---------------------------------------------------------------------------
@@ -296,6 +309,11 @@ class Product:
     field_fn: Callable[[xr.Dataset], np.ndarray] = None
     barbs: bool = False        # si ademas se dibujan barbas de viento
     freq: str = "01H"          # frecuencia del archivo: '01H' | '10M' | '24H'
+    # Si accum_hours esta definido, el producto es una ACUMULACION de PP horaria
+    # (suma de 'accum_hours' archivos 01H consecutivos que terminan en el plazo).
+    accum_hours: int | None = None
+    # Periodo de acumulacion en minutos (para armar el titulo automaticamente).
+    period_min: int | None = None
 
 
 def _wind_speed_knots(ds: xr.Dataset) -> np.ndarray:
@@ -306,6 +324,35 @@ def _wind_speed_knots(ds: xr.Dataset) -> np.ndarray:
 def _wind_speed_kmh(ds: xr.Dataset) -> np.ndarray:
     mag = ds["magViento10"].isel(time=0).values  # m/s
     return mag * 3.6  # a km/h
+
+
+def build_accum_title(period_min: int) -> str:
+    """Arma el titulo de un producto de precipitacion acumulada segun el
+    periodo (en minutos), respetando genero/numero en espanol.
+
+    Ejemplos:
+        10   -> 'Precipitacion Acumulada 10 minutos previos (mm, somb.)'
+        60   -> 'Precipitacion Acumulada 1 hora previa (mm, somb.)'
+        360  -> 'Precipitacion Acumulada 6 horas previas (mm, somb.)'
+        1440 -> 'Precipitacion Acumulada 24 horas previas (mm, somb.)'
+    """
+    if period_min % 60 == 0:                       # expresable en horas
+        h = period_min // 60
+        unidad = "hora" if h == 1 else "horas"
+        previo = "previa" if h == 1 else "previas"
+        cantidad = f"{h} {unidad}"
+    else:                                          # se deja en minutos
+        unidad = "minuto" if period_min == 1 else "minutos"
+        previo = "previo" if period_min == 1 else "previos"
+        cantidad = f"{period_min} {unidad}"
+    return f"Precipitaci\u00f3n Acumulada {cantidad} {previo} (mm, somb.)"
+
+
+# Escalas (mm) para precipitacion acumulada. 15 bordes -> 14 intervalos (igual
+# que los 14 colores de PP10M_COLORS). extend='neither'.
+PP1H_LEVELS = [0.1, 0.25, 0.5, 1, 2, 4, 6, 10, 15, 20, 30, 45, 60, 90, 120]
+PP6H_LEVELS = [0.5, 1, 2, 5, 10, 15, 25, 35, 50, 70, 90, 120, 150, 200, 250]
+PP24H_LEVELS = [1, 5, 10, 20, 30, 50, 75, 100, 130, 160, 200, 250, 300, 400, 500]
 
 
 PRODUCTS: dict[str, Product] = {
@@ -347,20 +394,51 @@ PRODUCTS: dict[str, Product] = {
     ),
     "pp": Product(
         key="pp",
-        title="Precipitaci\u00f3n horaria / Hourly Precipitation",
+        title=build_accum_title(60),
         subtitle="WRF DET SMN 4 km",
-        units_label="Precipitaci\u00f3n [mm]",
-        cmap=_pp_cmap,
-        levels=np.array([0.1, 0.5, 1, 2, 5, 10, 15, 20, 30, 40, 60, 80, 120]),
+        units_label="Precipitaci\u00f3n acumulada 1 h [mm]",
+        cmap=_pp10m_cmap,
+        levels=np.array(PP1H_LEVELS),
         kind="contourf",
-        extend="max",
+        extend="neither",
         field_fn=lambda ds: ds["PP"].isel(time=0).values,
         barbs=False,
+        freq="01H",
+        period_min=60,
+    ),
+    "pp_6h": Product(
+        key="pp_6h",
+        title=build_accum_title(360),
+        subtitle="WRF DET SMN 4 km",
+        units_label="Precipitaci\u00f3n acumulada 6 h [mm]",
+        cmap=_pp10m_cmap,
+        levels=np.array(PP6H_LEVELS),
+        kind="contourf",
+        extend="neither",
+        field_fn=None,             # se calcula por acumulacion (ver make_plot)
+        barbs=False,
+        freq="01H",
+        accum_hours=6,
+        period_min=360,
+    ),
+    "pp_24h": Product(
+        key="pp_24h",
+        title=build_accum_title(1440),
+        subtitle="WRF DET SMN 4 km",
+        units_label="Precipitaci\u00f3n acumulada 24 h [mm]",
+        cmap=_pp10m_cmap,
+        levels=np.array(PP24H_LEVELS),
+        kind="contourf",
+        extend="neither",
+        field_fn=None,             # se calcula por acumulacion (ver make_plot)
+        barbs=False,
+        freq="01H",
+        accum_hours=24,
+        period_min=1440,
     ),
     "pp_10m": Product(
         key="pp_10m",
-        title=("Precipitaci\u00f3n Acumulada 10 minutos previos (mm, somb.)"
-               if not PP10M_AS_RATE
+        title=(build_accum_title(10) if not PP10M_AS_RATE
                else "Precipitaci\u00f3n 10 min - intensidad (mm/h, somb.)"),
         subtitle="WRF DET SMN 4 km",
         units_label=("Intensidad de precipitaci\u00f3n [mm/h]" if PP10M_AS_RATE
@@ -489,8 +567,8 @@ def _barb_step_for_extent(extent, x, y, target=26):
     return max(1, npts // target)
 
 
-def plot_product(ds: xr.Dataset, product: Product, region: str,
-                 init_time: datetime, valid_time: datetime,
+def plot_product(ds: xr.Dataset, product: Product, field: np.ndarray,
+                 region: str, init_time: datetime, valid_time: datetime,
                  out_path: str) -> str:
     """Genera el mapa para el producto/region indicados y lo guarda en disco."""
 
@@ -514,7 +592,6 @@ def plot_product(ds: xr.Dataset, product: Product, region: str,
     # ---- Campo escalar sombreado ------------------------------------------
     x = ds["x"].values
     y = ds["y"].values
-    field = product.field_fn(ds)
     cmap = product.cmap()
     levels = product.levels
     norm = BoundaryNorm(levels, ncolors=cmap.N, extend=product.extend) \
@@ -603,6 +680,43 @@ def plot_product(ds: xr.Dataset, product: Product, region: str,
 # 7) ORQUESTACION
 # ---------------------------------------------------------------------------
 
+def accumulate_pp(date: str, cycle: str, lead: int, accum_hours: int,
+                  force: bool = False):
+    """Suma la precipitacion horaria (PP de archivos 01H) sobre las
+    'accum_hours' horas que terminan en el plazo 'lead'.
+
+    Devuelve (campo_sumado, ds_ultimo) donde ds_ultimo se usa para las
+    coordenadas y el tiempo de validez.
+    """
+    first = lead - accum_hours + 1
+    if first < 1:
+        raise SystemExit(
+            f"[error] Para acumular {accum_hours} h se necesita --lead >= "
+            f"{accum_hours} (se pidio {lead}). Elija un plazo mayor.")
+    total = None
+    last_ds = None
+    print(f"[accum] Sumando PP horaria de los plazos {first:03d}..{lead:03d} "
+          f"({accum_hours} h)")
+    for l in range(first, lead + 1):
+        f = download_file(date, cycle, l, freq="01H", force=force)
+        ds = xr.open_dataset(f)
+        pp = ds["PP"].isel(time=0).values
+        total = pp.copy() if total is None else total + pp
+        if l == lead:
+            last_ds = ds
+    return total, last_ds
+
+
+def _valid_time_from_ds(ds: xr.Dataset, init_time: datetime,
+                        lead: int) -> datetime:
+    """Obtiene el tiempo de validez desde la coordenada 'time' del dataset."""
+    try:
+        ts = np.datetime64(ds["time"].isel(time=0).values, "s")
+        return datetime.utcfromtimestamp(ts.astype("O").timestamp())
+    except Exception:
+        return init_time + timedelta(hours=lead)
+
+
 def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
               region: str = "argentina", force_download: bool = False) -> str:
     """Descarga los datos y genera el plot del producto/region pedidos."""
@@ -610,24 +724,25 @@ def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
         raise KeyError(f"Producto '{var}' no definido. Opciones: {list(PRODUCTS)}")
     product = PRODUCTS[var]
 
-    local = download_file(date, cycle, lead, freq=product.freq,
-                          force=force_download)
-    ds = xr.open_dataset(local)
-
-    # Tiempo de inicializacion (ciclo) y de validez (coordenada 'time').
     init_time = datetime.strptime(f"{date}{cycle}", "%Y%m%d%H")
-    try:
-        valid_time = np.datetime64(ds["time"].isel(time=0).values, "s").item()
-        if not isinstance(valid_time, datetime):
-            valid_time = datetime.utcfromtimestamp(
-                np.datetime64(ds["time"].isel(time=0).values, "s").astype("O").timestamp()
-            )
-    except Exception:
-        valid_time = init_time + timedelta(hours=lead)
+
+    if product.accum_hours:
+        # Producto de acumulacion: sumar varios archivos horarios.
+        field, ds = accumulate_pp(date, cycle, lead, product.accum_hours,
+                                  force=force_download)
+    else:
+        # Producto de un solo archivo.
+        local = download_file(date, cycle, lead, freq=product.freq,
+                              force=force_download)
+        ds = xr.open_dataset(local)
+        field = product.field_fn(ds)
+
+    valid_time = _valid_time_from_ds(ds, init_time, lead)
 
     tag = f"{var}_{region}_{date}_{cycle}_f{lead:03d}"
     out_path = os.path.join(OUTPUT_DIR, f"WRFDET_{tag}.png")
-    return plot_product(ds, product, region, init_time, valid_time, out_path)
+    return plot_product(ds, product, field, region, init_time, valid_time,
+                        out_path)
 
 
 def _parse_args():
@@ -643,12 +758,18 @@ def _parse_args():
                         "patagonia). Use --list-regions para ver todas.")
     p.add_argument("--list-regions", action="store_true",
                    help="Lista todas las regiones disponibles y termina.")
+    p.add_argument("--list", "--list-vars", dest="list_vars",
+                   action="store_true",
+                   help="Lista todos los productos/variables disponibles y termina.")
     p.add_argument("--force", action="store_true", help="Forzar re-descarga")
     return p.parse_args()
 
 
 def main():
     args = _parse_args()
+    if args.list_vars:
+        list_products()
+        return
     if args.list_regions:
         list_regions()
         return
