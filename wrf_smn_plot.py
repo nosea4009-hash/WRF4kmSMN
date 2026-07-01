@@ -243,6 +243,38 @@ def _pp_cmap():
     return ListedColormap(colors)
 
 
+# Paleta de precipitacion en 10 minutos (14 colores = 14 intervalos).
+PP10M_COLORS = [
+    "#006538", "#2ea355", "#75c678", "#c1e498", "#fbffc9", "#018087",
+    "#66a8cf", "#b9c8dd", "#a43603", "#e5550c", "#fc8c3f", "#fcbe83",
+    "#790276", "#7c0079",
+]
+
+# Si True, se muestra la INTENSIDAD en mm/h (= mm en 10 min x 6).
+# Si False, se muestra la precipitacion acumulada nativa en mm (por 10 min).
+PP10M_AS_RATE = True
+
+# Escala en mm/h pensada para un periodo de acumulacion de 10 minutos.
+# 15 bordes -> 14 intervalos (coincide con los 14 colores). extend='neither'.
+# Va desde llovizna debil hasta lluvia extrema (convectiva). El tope (200 mm/h)
+# equivale a ~33 mm en 10 min, valor practicamente inalcanzable.
+PP10M_LEVELS_RATE = [0.5, 1, 2, 4, 6, 10, 15, 20, 30, 45, 60, 90, 120, 160, 200]
+# Escala equivalente en mm acumulados en 10 min (= mm/h / 6).
+PP10M_LEVELS_MM = [0.1, 0.2, 0.35, 0.7, 1, 1.7, 2.5, 3.5, 5, 7.5, 10, 15, 20, 27, 33]
+
+
+def _pp10m_cmap():
+    """Paleta para precipitacion en 10 minutos (14 colores)."""
+    return ListedColormap(PP10M_COLORS)
+
+
+def _pp_10min(ds: xr.Dataset) -> np.ndarray:
+    """Campo de precipitacion en 10 min. Devuelve mm/h (intensidad) o mm nativo
+    segun PP10M_AS_RATE."""
+    pp = ds["PP"].isel(time=0).values  # mm acumulados en 10 minutos
+    return pp * 6.0 if PP10M_AS_RATE else pp
+
+
 # ---------------------------------------------------------------------------
 # 3) REGISTRO DE PRODUCTOS / VARIABLES
 # ---------------------------------------------------------------------------
@@ -262,6 +294,7 @@ class Product:
     # Funcion que, dado el dataset, devuelve el campo escalar a sombrear.
     field_fn: Callable[[xr.Dataset], np.ndarray] = None
     barbs: bool = False        # si ademas se dibujan barbas de viento
+    freq: str = "01H"          # frecuencia del archivo: '01H' | '10M' | '24H'
 
 
 def _wind_speed_knots(ds: xr.Dataset) -> np.ndarray:
@@ -322,6 +355,20 @@ PRODUCTS: dict[str, Product] = {
         extend="max",
         field_fn=lambda ds: ds["PP"].isel(time=0).values,
         barbs=False,
+    ),
+    "pp_10m": Product(
+        key="pp_10m",
+        title="Precipitaci\u00f3n en 10 min / 10-min Precipitation",
+        subtitle="WRF DET SMN 4 km",
+        units_label=("Intensidad de precipitaci\u00f3n [mm/h]" if PP10M_AS_RATE
+                     else "Precipitaci\u00f3n acumulada en 10 min [mm]"),
+        cmap=_pp10m_cmap,
+        levels=np.array(PP10M_LEVELS_RATE if PP10M_AS_RATE else PP10M_LEVELS_MM),
+        kind="contourf",
+        extend="neither",
+        field_fn=_pp_10min,
+        barbs=False,
+        freq="10M",
     ),
     "psfc": Product(
         key="psfc",
@@ -560,7 +607,8 @@ def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
         raise KeyError(f"Producto '{var}' no definido. Opciones: {list(PRODUCTS)}")
     product = PRODUCTS[var]
 
-    local = download_file(date, cycle, lead, force=force_download)
+    local = download_file(date, cycle, lead, freq=product.freq,
+                          force=force_download)
     ds = xr.open_dataset(local)
 
     # Tiempo de inicializacion (ciclo) y de validez (coordenada 'time').
