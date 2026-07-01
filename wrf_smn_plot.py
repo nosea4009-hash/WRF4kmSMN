@@ -569,7 +569,7 @@ def _barb_step_for_extent(extent, x, y, target=26):
 
 def plot_product(ds: xr.Dataset, product: Product, field: np.ndarray,
                  region: str, init_time: datetime, valid_time: datetime,
-                 out_path: str) -> str:
+                 out_path: str, title_override: str | None = None) -> str:
     """Genera el mapa para el producto/region indicados y lo guarda en disco."""
 
     proj = wrf_projection(ds)
@@ -649,8 +649,9 @@ def plot_product(ds: xr.Dataset, product: Product, field: np.ndarray,
 
     # ---- Titulos (arriba del recuadro) ------------------------------------
     # Izquierda: producto / variable (estilo del ejemplo)
-    fig.text(0.03, 0.965, product.title, ha="left", va="bottom",
-             fontsize=13.5, fontweight="normal", family="sans-serif")
+    fig.text(0.03, 0.965, title_override or product.title, ha="left",
+             va="bottom", fontsize=13.5, fontweight="normal",
+             family="sans-serif")
     fig.text(0.03, 0.937, product.subtitle, ha="left", va="bottom",
              fontsize=12, fontweight="normal", family="sans-serif")
 
@@ -779,6 +780,131 @@ def make_plot(date: str, cycle: str, lead: int, var: str = "10m_wind",
     return result
 
 
+def _assemble_gif(frame_paths, gif_path, fps=2):
+    """Une una lista de PNG en un GIF animado (usa Pillow)."""
+    from PIL import Image
+    imgs = [Image.open(p).convert("RGB") for p in frame_paths]
+    duration = int(round(1000.0 / max(fps, 0.1)))  # ms por frame
+    imgs[0].save(gif_path, save_all=True, append_images=imgs[1:],
+                 duration=duration, loop=0, disposal=2)
+    for im in imgs:
+        im.close()
+    print(f"[gif] Animacion guardada en: {gif_path} "
+          f"({len(frame_paths)} frames, {fps} fps)")
+    return gif_path
+
+
+def make_gif(date: str, cycle: str, lead: int, var: str = "pp_6h",
+             region: str = "argentina", gif_mode: str = "building",
+             frames: int | None = None, fps: float = 2.0,
+             force_download: bool = False, cleanup: bool = False) -> str:
+    """Genera un GIF animado del producto.
+
+    - Productos acumulados (pp_6h, pp_24h):
+        * gif_mode='building': la lluvia se ACUMULA cuadro a cuadro (1 h, 2 h,
+          ... hasta el total). El ultimo frame es el acumulado total que
+          termina en el plazo --lead. Nro de frames = accum_hours.
+        * gif_mode='rolling': ventana movil completa (accum_hours) terminando
+          en plazos consecutivos. Nro de frames = --frames (o accum_hours).
+    - Productos instantaneos (viento, T2, etc.): anima los plazos consecutivos;
+      por defecto los plazos 1..--lead (o los ultimos --frames).
+    """
+    if var not in PRODUCTS:
+        raise KeyError(f"Producto '{var}' no definido. Opciones: {list(PRODUCTS)}")
+    product = PRODUCTS[var]
+    init_time = datetime.strptime(f"{date}{cycle}", "%Y%m%d%H")
+
+    frame_dir = os.path.join(OUTPUT_DIR, f"_frames_{var}_{region}_{date}_"
+                             f"{cycle}_f{lead:03d}")
+    os.makedirs(frame_dir, exist_ok=True)
+    frame_paths, used_files = [], []
+
+    def render(ds, field, valid_time, idx, title_override=None):
+        fp = os.path.join(frame_dir, f"frame_{idx:03d}.png")
+        plot_product(ds, product, field, region, init_time, valid_time, fp,
+                     title_override=title_override)
+        frame_paths.append(fp)
+
+    if product.accum_hours:
+        accum = product.accum_hours
+        if gif_mode == "building":
+            first = lead - accum + 1
+            if first < 1:
+                raise SystemExit(
+                    f"[error] Para el GIF 'building' de {accum} h se necesita "
+                    f"--lead >= {accum} (se pidio {lead}).")
+            running = None
+            for k, l in enumerate(range(first, lead + 1), start=1):
+                f = download_file(date, cycle, l, freq="01H", force=force_download)
+                used_files.append(f)
+                ds = xr.open_dataset(f)
+                pp = ds["PP"].isel(time=0).values
+                running = pp.copy() if running is None else running + pp
+                vt = _valid_time_from_ds(ds, init_time, l)
+                render(ds, running.copy(), vt, k,
+                       title_override=build_accum_title(k * 60))
+                ds.close()
+        else:  # rolling
+            n = frames or accum
+            end_first = lead - n + 1
+            need_first = end_first - accum + 1
+            if need_first < 1:
+                raise SystemExit(
+                    f"[error] Para el GIF 'rolling' ({n} frames de {accum} h) "
+                    f"se necesita --lead >= {n + accum - 1} (se pidio {lead}).")
+            pp_by_lead, vt_by_lead = {}, {}
+            for l in range(need_first, lead + 1):
+                f = download_file(date, cycle, l, freq="01H", force=force_download)
+                used_files.append(f)
+                ds = xr.open_dataset(f)
+                pp_by_lead[l] = ds["PP"].isel(time=0).values
+                vt_by_lead[l] = _valid_time_from_ds(ds, init_time, l)
+                if l == lead:
+                    ds_coords = ds
+                else:
+                    ds.close()
+            for k, end in enumerate(range(end_first, lead + 1), start=1):
+                win = sum(pp_by_lead[l] for l in range(end - accum + 1, end + 1))
+                render(ds_coords, win, vt_by_lead[end], k)
+            ds_coords.close()
+    else:
+        # Producto instantaneo: animar plazos consecutivos.
+        n = frames or lead
+        start = max(1, lead - n + 1)
+        for k, l in enumerate(range(start, lead + 1), start=1):
+            f = download_file(date, cycle, l, freq=product.freq,
+                              force=force_download)
+            used_files.append(f)
+            ds = xr.open_dataset(f)
+            field = product.field_fn(ds)
+            vt = _valid_time_from_ds(ds, init_time, l)
+            render(ds, field, vt, k)
+            ds.close()
+
+    if not frame_paths:
+        raise SystemExit("[error] No se genero ningun frame para el GIF.")
+
+    gif_tag = gif_mode if product.accum_hours else "anim"
+    gif_path = os.path.join(
+        OUTPUT_DIR, f"WRFDET_{var}_{region}_{date}_{cycle}_{gif_tag}_"
+        f"f{lead:03d}.gif")
+    _assemble_gif(frame_paths, gif_path, fps=fps)
+
+    # Limpieza: los PNG de frames son temporales; los .nc solo si --cleanup.
+    for fp in frame_paths:
+        try:
+            os.remove(fp)
+        except OSError:
+            pass
+    try:
+        os.rmdir(frame_dir)
+    except OSError:
+        pass
+    if cleanup:
+        cleanup_files(used_files)
+    return gif_path
+
+
 def _parse_args():
     p = argparse.ArgumentParser(
         description="Ploteo del WRF DET del SMN (4 km) estilo MetPy.")
@@ -799,6 +925,19 @@ def _parse_args():
     p.add_argument("--cleanup", action="store_true",
                    help="Borra del cache los archivos .nc usados por esta "
                         "corrida al terminar (conserva el .png de salida).")
+    # ---- Modo GIF ----
+    p.add_argument("--gif", action="store_true",
+                   help="Genera un GIF animado en lugar de una imagen unica.")
+    p.add_argument("--gif-mode", dest="gif_mode", default="building",
+                   choices=["building", "rolling"],
+                   help="Solo para productos acumulados. 'building': la lluvia "
+                        "se acumula cuadro a cuadro hasta el total (default). "
+                        "'rolling': ventana movil de igual duracion.")
+    p.add_argument("--frames", type=int, default=None,
+                   help="Nro de frames del GIF (opcional). Por defecto: "
+                        "accum_hours en acumulados, o --lead en instantaneos.")
+    p.add_argument("--fps", type=float, default=2.0,
+                   help="Velocidad del GIF en cuadros por segundo (default 2).")
     return p.parse_args()
 
 
@@ -817,8 +956,12 @@ def main():
     note = _font_note()
     if note:
         print(note)
-    make_plot(args.date, args.cycle, args.lead, args.var, args.region,
-              args.force, args.cleanup)
+    if args.gif:
+        make_gif(args.date, args.cycle, args.lead, args.var, args.region,
+                 args.gif_mode, args.frames, args.fps, args.force, args.cleanup)
+    else:
+        make_plot(args.date, args.cycle, args.lead, args.var, args.region,
+                  args.force, args.cleanup)
 
 
 if __name__ == "__main__":
